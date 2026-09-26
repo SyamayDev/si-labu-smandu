@@ -1,0 +1,29 @@
+{
+  "name": "si-labu-smandu",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "datatables.net-buttons-dt": "^4.1.2",
+    "datatables.net-dt": "^3.1.2",
+    "datatables.net-react": "^1.0.2",
+    "datatables.net-responsive-dt": "^4.1.1",
+    "jszip": "^3.10.2",
+    "lucide-react": "^0.468.0",
+    "motion": "^12.23.24",
+    "pdfmake": "^0.3.11",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.9.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "vite": "^7.1.7"
+  }
+}
