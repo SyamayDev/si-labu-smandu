@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Link,
   NavLink,
@@ -33,24 +33,11 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { motion } from "motion/react";
-import DataTable from "datatables.net-react";
-import DT from "datatables.net-dt";
-import "datatables.net-responsive-dt";
-import "datatables.net-buttons-dt";
-import "datatables.net-buttons/js/buttons.html5.mjs";
-import "datatables.net-buttons/js/buttons.print.mjs";
-import "datatables.net-buttons/js/buttons.colVis.mjs";
-import JSZip from "jszip";
-import pdfMake from "pdfmake/build/pdfmake";
-import pdfFonts from "pdfmake/build/vfs_fonts";
 import { incidentOptions, validateReport } from "./lib/validators";
 import { generateWhatsAppMessage, openWhatsApp } from "./lib/whatsapp";
-import { hasSupabase, supabase } from "./lib/supabase";
+import { getSupabase, hasSupabase } from "./lib/supabase";
 
-DataTable.use(DT);
-pdfMake.vfs = pdfFonts.vfs;
-if (typeof window !== "undefined") window.JSZip = JSZip;
+const ReportTable = lazy(() => import("./ReportTable"));
 
 const defaultTemplate = `Halo {{nama}},\n\nSaya Guru BK SMA Negeri 2 Medan.\n\nKami sudah menerima laporan {{nomor_laporan}} terkait {{jenis}} pada {{tanggal}} di {{lokasi}}. Kami ingin menindaklanjuti laporan tersebut. Silakan membalas pesan ini agar kita dapat melanjutkan komunikasi.\n\nTerima kasih sudah berani bercerita.\n\nSalam,\nGuru BK SMA Negeri 2 Medan`;
 const demoReports = [
@@ -109,10 +96,13 @@ function useAdminReports() {
   useEffect(() => {
     if (!hasSupabase) return;
     let active = true;
-    supabase
-      .from("reports")
-      .select("*")
-      .order("created_at", { ascending: false })
+    getSupabase()
+      .then((supabase) =>
+        supabase
+          .from("reports")
+          .select("*")
+          .order("created_at", { ascending: false }),
+      )
       .then(({ data, error: queryError }) => {
         if (!active) return;
         setReports(data || []);
@@ -126,6 +116,7 @@ function useAdminReports() {
 
   const updateStatus = async (id, status) => {
     if (hasSupabase) {
+      const supabase = await getSupabase();
       const { error: updateError } = await supabase
         .from("reports")
         .update({ status })
@@ -149,16 +140,6 @@ function useAdminReports() {
   };
 
   return { reports, loading, error, updateStatus };
-}
-
-function escapeHtml(value) {
-  return String(value ?? "").replace(
-    /[&<>"']/g,
-    (character) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        character
-      ],
-  );
 }
 
 function Brand() {
@@ -203,40 +184,38 @@ function Home() {
     <PublicLayout>
       <section className="hero">
         <div className="container hero-grid">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
+          <div>
             <p className="kicker">
-              <ShieldCheck size={16} /> Ruang aman siswa
+              <ShieldCheck size={16} /> Sistem Informasi Laporan Bullying
             </p>
-            <h1>
-              Berani bicara.
+            <h1 className="hero-brand-title">
+              SI LABU.
               <br />
-              <em>Kami siap mendengar.</em>
+              <em>Sistem Informasi Laporan Bullying.</em>
             </h1>
             <p className="hero-copy">
-              SI LABU membantu siswa SMA Negeri 2 Medan menyampaikan laporan
-              terkait perundungan kepada Guru BK dengan mudah dan aman.
+              Saluran bagi siswa SMA Negeri 2 Medan untuk menyampaikan laporan
+              bullying langsung kepada Guru BK. Tidak perlu membuat akun siswa.
             </p>
             <div className="hero-actions">
-              <Link className="button primary" to="/lapor">
-                Lapor Bully! <ArrowRight size={18} />
+              <Link className="button primary report-cta" to="/lapor">
+                Buat Laporan Sekarang
+                <span className="report-cta-icon">
+                  <ArrowRight size={19} />
+                </span>
               </Link>
             </div>
-          </motion.div>
-          <motion.div
-            className="hero-visual"
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-          >
+          </div>
+          <div className="hero-visual">
             <div className="visual-ring">
               <img
                 className="mascot-image"
                 src="/assets/mascot/mascot.webp"
                 alt="Maskot SI LABU"
+                width="477"
+                height="523"
+                fetchPriority="high"
+                decoding="async"
               />
             </div>
             <div className="visual-note">
@@ -251,7 +230,7 @@ function Home() {
               <br />
               <strong>untuk merasa lebih aman.</strong>
             </div>
-          </motion.div>
+          </div>
         </div>
       </section>
       <section className="intro-band">
@@ -323,6 +302,10 @@ function Home() {
               className="supportive-mascot"
               src="/assets/mascot/mascot-supportive.webp"
               alt="Maskot SI LABU memberi dukungan"
+              width="528"
+              height="473"
+              loading="lazy"
+              decoding="async"
               onError={(event) =>
                 event.currentTarget.classList.add("asset-missing")
               }
@@ -371,25 +354,29 @@ function Home() {
   );
 }
 function Step({ n, title, text }) {
+  const imageDimensions = {
+    "01": [478, 522],
+    "02": [500, 499],
+    "03": [508, 491],
+    "04": [525, 475],
+  }[n];
   return (
-    <motion.div
-      className="step"
-      initial={{ opacity: 0, x: Number(n) % 2 ? -24 : 24 }}
-      whileInView={{ opacity: 1, x: 0 }}
-      viewport={{ once: true, amount: 0.35 }}
-      transition={{ duration: 0.45, delay: Number(n) * 0.07 }}
-    >
+    <div className="step">
       <img
         className="step-art"
         src={`/assets/mascot/mascot-step-${n}.webp`}
         alt=""
         aria-hidden="true"
+        width={imageDimensions[0]}
+        height={imageDimensions[1]}
+        loading="lazy"
+        decoding="async"
         onError={(event) => event.currentTarget.classList.add("asset-missing")}
       />
       <span>{n}</span>
       <h3>{title}</h3>
       <p>{text}</p>
-    </motion.div>
+    </div>
   );
 }
 function About() {
@@ -466,6 +453,7 @@ function ReportForm() {
     setSubmitError("");
     let report;
     if (hasSupabase) {
+      const supabase = await getSupabase();
       const { data: savedReport, error: saveError } = await supabase
         .from("reports")
         .insert(data)
@@ -754,6 +742,7 @@ function AdminLogin() {
       return;
     }
     setLoading(true);
+    const supabase = await getSupabase();
     const { data, error: loginError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -840,9 +829,11 @@ function AdminLayout({ children }) {
   useEffect(() => setMobileMenuOpen(false), [location.pathname]);
   useEffect(() => {
     if (!hasSupabase) return;
-    supabase.auth.getUser().then(({ data }) => {
-      if (!data.user) navigate("/admin/login", { replace: true });
-    });
+    getSupabase()
+      .then((supabase) => supabase.auth.getUser())
+      .then(({ data }) => {
+        if (!data.user) navigate("/admin/login", { replace: true });
+      });
   }, [navigate]);
   return (
     <div className="admin-shell">
@@ -985,7 +976,13 @@ function Dashboard() {
           {loading ? (
             <p className="table-message">Memuat laporan...</p>
           ) : (
-            <ReportTable reports={reports.slice(0, 5)} />
+            <Suspense
+              fallback={
+                <p className="table-message">Menyiapkan tabel laporan...</p>
+              }
+            >
+              <ReportTable reports={reports.slice(0, 5)} />
+            </Suspense>
           )}
         </div>
       </div>
@@ -1029,81 +1026,17 @@ function Reports() {
           {loading ? (
             <p className="table-message">Memuat laporan...</p>
           ) : (
-            <ReportTable reports={reports} />
+            <Suspense
+              fallback={
+                <p className="table-message">Menyiapkan tabel laporan...</p>
+              }
+            >
+              <ReportTable reports={reports} />
+            </Suspense>
           )}
         </div>
       </div>
     </AdminLayout>
-  );
-}
-function ReportTable({ reports }) {
-  const tableData = reports.map((report) => [
-    escapeHtml(report.report_code),
-    escapeHtml(`${report.reporter_name} · ${report.reporter_class}`),
-    escapeHtml((report.incident_types || []).join(", ")),
-    escapeHtml(report.incident_date),
-    escapeHtml(report.status),
-    report.id,
-  ]);
-  const columns = [
-    { title: "Nomor laporan", className: "report-code-cell" },
-    { title: "Pelapor" },
-    { title: "Jenis kejadian" },
-    { title: "Tanggal" },
-    {
-      title: "Status",
-      render: (data) => {
-        const statusClass =
-          { Baru: "baru", Ditangani: "ditangani", Selesai: "selesai" }[data] ||
-          "";
-        return `<span class="status ${statusClass}">${data}</span>`;
-      },
-    },
-    {
-      title: "Aksi",
-      orderable: false,
-      searchable: false,
-      render: (data) =>
-        `<a class="table-action" href="/admin/laporan/${escapeHtml(data)}" aria-label="Lihat detail laporan">Detail <span aria-hidden="true">›</span></a>`,
-    },
-  ];
-  return (
-    <div className="datatable-shell">
-      <DataTable
-        data={tableData}
-        columns={columns}
-        className="display si-labu-datatable"
-        options={{
-          responsive: true,
-          pageLength: 10,
-          order: [[3, "desc"]],
-          autoWidth: false,
-          lengthMenu: [
-            [10, 25, 50, -1],
-            [10, 25, 50, "Semua"],
-          ],
-          layout: {
-            topStart: {
-              buttons: ["copy", "csv", "excel", "pdf", "print", "colvis"],
-            },
-            topEnd: "search",
-            bottomStart: "pageLength",
-            bottomEnd: "paging",
-          },
-          language: {
-            search: "Cari laporan:",
-            searchPlaceholder: "Nama, nomor, kelas, jenis...",
-            emptyTable: "Belum ada laporan.",
-            zeroRecords: "Tidak ada laporan yang cocok.",
-            info: "Menampilkan _START_ sampai _END_ dari _TOTAL_ laporan",
-            infoEmpty: "Belum ada laporan",
-            lengthMenu: "Tampilkan _MENU_",
-            paginate: { previous: "Sebelumnya", next: "Berikutnya" },
-          },
-          filename: `SI-LABU-Rekap-Laporan-${new Date().toISOString().slice(0, 7)}`,
-        }}
-      />
-    </div>
   );
 }
 function Detail() {
@@ -1230,10 +1163,13 @@ function GuruBk() {
   const [saved, setSaved] = useState(false);
   useEffect(() => {
     if (!hasSupabase) return;
-    supabase
-      .from("profiles")
-      .select("id, full_name, email, phone, is_admin")
-      .eq("is_admin", true)
+    getSupabase()
+      .then((supabase) =>
+        supabase
+          .from("profiles")
+          .select("id, full_name, email, phone, is_admin")
+          .eq("is_admin", true),
+      )
       .then(({ data }) => {
         if (data?.length) {
           setAdmins(
@@ -1257,6 +1193,7 @@ function GuruBk() {
     )
       return;
     if (hasSupabase) {
+      const supabase = await getSupabase();
       const { error: passwordError } = await supabase.auth.updateUser({
         password: passwords.next,
       });
@@ -1395,6 +1332,7 @@ function Settings() {
     setSettings((current) => ({ ...current, [key]: value }));
   const saveSettings = async () => {
     if (hasSupabase) {
+      const supabase = await getSupabase();
       await supabase.from("site_settings").upsert(
         [
           { key: "school", value: { name: settings.school } },
@@ -1514,6 +1452,47 @@ function AdminSimple({ title, text }) {
   );
 }
 export default function App() {
+  const location = useLocation();
+  useEffect(() => {
+    const isAdmin = location.pathname.startsWith("/admin");
+    const metadata = isAdmin
+      ? {
+          title: "Portal Guru BK | SI LABU SMA Negeri 2 Medan",
+          description:
+            "Portal Guru BK untuk mengelola laporan bullying siswa SMA Negeri 2 Medan.",
+        }
+      : location.pathname === "/lapor"
+        ? {
+            title: "Buat Laporan Bullying | SI LABU SMA Negeri 2 Medan",
+            description:
+              "Sampaikan laporan bullying kepada Guru BK SMA Negeri 2 Medan melalui SI LABU.",
+          }
+        : location.pathname === "/tentang"
+          ? {
+              title: "Tentang SI LABU | Sistem Informasi Laporan Bullying",
+              description:
+                "Kenali SI LABU, sistem informasi laporan bullying untuk siswa SMA Negeri 2 Medan.",
+            }
+          : {
+              title:
+                "SI LABU | Sistem Informasi Laporan Bullying SMA Negeri 2 Medan",
+              description:
+                "Saluran resmi bagi siswa SMA Negeri 2 Medan untuk menyampaikan laporan bullying langsung kepada Guru BK.",
+            };
+    document.title = metadata.title;
+    document
+      .querySelector('meta[name="description"]')
+      ?.setAttribute("content", metadata.description);
+    document
+      .querySelector('meta[property="og:title"]')
+      ?.setAttribute("content", metadata.title);
+    document
+      .querySelector('meta[property="og:description"]')
+      ?.setAttribute("content", metadata.description);
+    document
+      .querySelector('meta[name="robots"]')
+      ?.setAttribute("content", isAdmin ? "noindex,nofollow" : "index,follow");
+  }, [location.pathname]);
   return (
     <Routes>
       <Route path="/" element={<Home />} />
