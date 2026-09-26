@@ -8,6 +8,8 @@ export const incidentOptions = [
 ];
 export const reportStatuses = ["Baru", "Ditangani", "Selesai"];
 export const maxFileSize = 25 * 1024 * 1024;
+export const maxFiles = 5;
+export const maxTotalFileSize = 50 * 1024 * 1024;
 export const allowedFileTypes = [
   "image/jpeg",
   "image/png",
@@ -22,6 +24,10 @@ export const allowedFileTypes = [
 
 export function validateReport(data, files = []) {
   const errors = {};
+  if (files.length > maxFiles)
+    errors.files = `Lampiran maksimal ${maxFiles} file.`;
+  if (files.reduce((total, file) => total + file.size, 0) > maxTotalFileSize)
+    errors.files = "Total ukuran lampiran maksimal 50 MB.";
   if (!data.reporter_name.trim()) errors.reporter_name = "Nama wajib diisi.";
   if (!data.reporter_class.trim()) errors.reporter_class = "Kelas wajib diisi.";
   if (!/^\+?[\d\s-]{8,18}$/.test(data.reporter_phone.trim()))

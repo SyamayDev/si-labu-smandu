@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import DataTable from "datatables.net-react";
 import DT from "datatables.net-dt";
 import "datatables.net-responsive-dt";
@@ -18,7 +19,29 @@ function escapeHtml(value) {
   );
 }
 
-export default function ReportTable({ reports }) {
+export default function ReportTable({ reports, onDelete }) {
+  const shellRef = useRef(null);
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell || !onDelete) return;
+    const handleDelete = async (event) => {
+      if (!(event.target instanceof Element)) return;
+      const button = event.target.closest("[data-delete-report]");
+      if (!button || !shell.contains(button)) return;
+      const reportId = button.getAttribute("data-delete-report");
+      if (
+        !reportId ||
+        !window.confirm("Hapus laporan ini beserta lampirannya?")
+      )
+        return;
+      button.setAttribute("disabled", "true");
+      const deleted = await onDelete(reportId);
+      if (!deleted) button.removeAttribute("disabled");
+    };
+    shell.addEventListener("click", handleDelete);
+    return () => shell.removeEventListener("click", handleDelete);
+  }, [onDelete]);
+
   const tableData = reports.map((report) => [
     escapeHtml(report.report_code),
     escapeHtml(`${report.reporter_name} · ${report.reporter_class}`),
@@ -45,13 +68,18 @@ export default function ReportTable({ reports }) {
       title: "Aksi",
       orderable: false,
       searchable: false,
-      render: (data) =>
-        `<a class="table-action" href="/admin/laporan/${escapeHtml(data)}" aria-label="Lihat detail laporan">Detail <span aria-hidden="true">›</span></a>`,
+      render: (data) => {
+        const detail = `<a class="table-action" href="/admin/laporan/${escapeHtml(data)}" aria-label="Lihat detail laporan">Detail <span aria-hidden="true">›</span></a>`;
+        const remove = onDelete
+          ? `<button class="table-delete" type="button" data-delete-report="${escapeHtml(data)}" aria-label="Hapus laporan">Hapus</button>`
+          : "";
+        return `<div class="table-actions">${detail}${remove}</div>`;
+      },
     },
   ];
 
   return (
-    <div className="datatable-shell">
+    <div className="datatable-shell" ref={shellRef}>
       <DataTable
         data={tableData}
         columns={columns}

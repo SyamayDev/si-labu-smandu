@@ -25,10 +25,12 @@ import {
   LayoutDashboard,
   LockKeyhole,
   KeyRound,
+  LogOut,
   Menu,
   MessageCircle,
   Save,
   ShieldCheck,
+  Trash2,
   Upload,
   Users,
   X,
@@ -38,7 +40,6 @@ import { generateWhatsAppMessage, openWhatsApp } from "./lib/whatsapp";
 import { getSupabase, hasSupabase } from "./lib/supabase";
 
 const ReportTable = lazy(() => import("./ReportTable"));
-
 const defaultTemplate = `Halo {{nama}},\n\nSaya Guru BK SMA Negeri 2 Medan.\n\nKami sudah menerima laporan {{nomor_laporan}} terkait {{jenis}} pada {{tanggal}} di {{lokasi}}. Kami ingin menindaklanjuti laporan tersebut. Silakan membalas pesan ini agar kita dapat melanjutkan komunikasi.\n\nTerima kasih sudah berani bercerita.\n\nSalam,\nGuru BK SMA Negeri 2 Medan`;
 const demoReports = [
   {
@@ -139,7 +140,30 @@ function useAdminReports() {
     return true;
   };
 
-  return { reports, loading, error, updateStatus };
+  const deleteReport = async (id) => {
+    if (hasSupabase) {
+      const supabase = await getSupabase();
+      const { error: deleteError } = await supabase.functions.invoke(
+        "delete-report",
+        { body: { report_id: id } },
+      );
+      if (deleteError) {
+        setError("Laporan gagal dihapus. Pastikan Edge Function tersedia.");
+        return false;
+      }
+    }
+    setReports((current) => {
+      const next = current.filter((report) => report.id !== id);
+      if (!hasSupabase) {
+        window.localStorage.setItem("si-labu-reports", JSON.stringify(next));
+      }
+      return next;
+    });
+    setError("");
+    return true;
+  };
+
+  return { reports, loading, error, updateStatus, deleteReport };
 }
 
 function Brand() {
@@ -451,38 +475,63 @@ function ReportForm() {
     if (Object.keys(next).length) return;
     setSubmitting(true);
     setSubmitError("");
-    let report;
-    if (hasSupabase) {
-      const supabase = await getSupabase();
-      const { data: savedReport, error: saveError } = await supabase
-        .from("reports")
-        .insert(data)
-        .select("*")
-        .single();
-      if (saveError) {
-        setSubmitError(
-          "Laporan belum dapat dikirim. Periksa koneksi lalu coba lagi.",
+    try {
+      let report;
+      if (hasSupabase) {
+        const supabase = await getSupabase();
+        const body = new FormData();
+        body.set("report", JSON.stringify(data));
+        files.forEach((file) => body.append("files", file, file.name));
+        const { data: submittedReport, error: submitFunctionError } =
+          await supabase.functions.invoke("submit-report", { body });
+        if (submitFunctionError) {
+          let message = submitFunctionError.message;
+          if (submitFunctionError.context instanceof Response) {
+            const responseBody = await submitFunctionError.context
+              .clone()
+              .json()
+              .catch(() => null);
+            message = responseBody?.error || message;
+          }
+          console.error(
+            "Gagal menyimpan laporan SI LABU:",
+            submitFunctionError,
+          );
+          setSubmitError(
+            message || "Laporan dan lampiran belum dapat dikirim.",
+          );
+          return;
+        }
+        report = submittedReport;
+      } else {
+        if (files.length) {
+          setSubmitError(
+            "Pengiriman lampiran memerlukan koneksi SI LABU. Coba lagi saat layanan tersedia.",
+          );
+          return;
+        }
+        const localReports = readLocalReports();
+        report = {
+          ...data,
+          id: crypto.randomUUID(),
+          report_code: `LABU-${new Date().getFullYear()}-${String(localReports.length + 1).padStart(4, "0")}`,
+          status: "Baru",
+          created_at: new Date().toISOString(),
+        };
+        window.localStorage.setItem(
+          "si-labu-reports",
+          JSON.stringify([report, ...localReports]),
         );
-        setSubmitting(false);
-        return;
       }
-      report = savedReport;
-    } else {
-      const localReports = readLocalReports();
-      report = {
-        ...data,
-        id: crypto.randomUUID(),
-        report_code: `LABU-${new Date().getFullYear()}-${String(localReports.length + 1).padStart(4, "0")}`,
-        status: "Baru",
-        created_at: new Date().toISOString(),
-      };
-      window.localStorage.setItem(
-        "si-labu-reports",
-        JSON.stringify([report, ...localReports]),
+      setSubmitted(report);
+    } catch (error) {
+      console.error("Gagal mengirim laporan SI LABU:", error);
+      setSubmitError(
+        "Laporan belum dapat dikirim. Periksa koneksi lalu coba lagi.",
       );
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitted(report);
-    setSubmitting(false);
   };
   if (submitted)
     return (
@@ -494,10 +543,13 @@ function ReportForm() {
           <p className="kicker">Laporan diterima</p>
           <h1>Terima kasih sudah berani bercerita.</h1>
           <p className="lead">
-            Laporanmu sudah tercatat untuk ditindaklanjuti Guru BK. Simpan nomor
-            laporan ini untuk referensi.
+            {submitted.report_code
+              ? "Laporanmu sudah tercatat untuk ditindaklanjuti Guru BK. Simpan nomor laporan ini untuk referensi."
+              : "Laporanmu sudah tercatat dan akan ditindaklanjuti Guru BK."}
           </p>
-          <div className="report-code">{submitted.report_code}</div>
+          {submitted.report_code && (
+            <div className="report-code">{submitted.report_code}</div>
+          )}
           <Link className="button primary" to="/">
             Kembali ke beranda <ArrowRight size={18} />
           </Link>
@@ -506,7 +558,7 @@ function ReportForm() {
     );
   return (
     <PublicLayout>
-      <section className="page-section container">
+      <section className="page-section container report-page">
         <div className="form-intro">
           <p className="kicker">Lapor Bully!</p>
           <h1>Ceritakan apa yang terjadi.</h1>
@@ -652,8 +704,8 @@ function ReportForm() {
                   Lampiran bukti <small>(opsional)</small>
                 </h2>
                 <p>
-                  JPG, PNG, WEBP, MP4, MOV, MP3, WAV, M4A, atau OGG. Maksimal 25
-                  MB per file.
+                  JPG, PNG, WEBP, MP4, MOV, MP3, WAV, M4A, atau OGG. Maksimal 5
+                  file, 25 MB per file, total 50 MB.
                 </p>
               </div>
               <Upload size={21} />
@@ -731,6 +783,28 @@ function AdminLogin() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!hasSupabase) return;
+    let active = true;
+    getSupabase()
+      .then((supabase) => supabase.auth.getSession())
+      .then(async ({ data }) => {
+        if (!active || !data.session?.user) return;
+        const supabase = await getSupabase();
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("is_admin")
+          .eq("id", data.session.user.id)
+          .maybeSingle();
+        if (active && profile?.is_admin) navigate("/admin", { replace: true });
+      })
+      .catch((sessionError) =>
+        console.error("Gagal memeriksa sesi admin SI LABU:", sessionError),
+      );
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
   const login = async () => {
     setError("");
     if (!email || !password) {
@@ -826,7 +900,36 @@ function AdminLayout({ children }) {
   const [showNotice, setShowNotice] = useState(
     Boolean(location.state?.welcome),
   );
+  const [noticeReport, setNoticeReport] = useState(null);
+  const [logoutError, setLogoutError] = useState("");
   useEffect(() => setMobileMenuOpen(false), [location.pathname]);
+  useEffect(() => {
+    if (!showNotice) return;
+    let active = true;
+    const loadLatestReport = async () => {
+      if (!hasSupabase) {
+        setNoticeReport(
+          readLocalReports().find((report) => report.status === "Baru") || null,
+        );
+        return;
+      }
+      const supabase = await getSupabase();
+      const { data, error } = await supabase
+        .from("reports")
+        .select("id, report_code")
+        .eq("status", "Baru")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!error && active) setNoticeReport(data || null);
+    };
+    loadLatestReport().catch((noticeError) =>
+      console.error("Gagal memuat laporan terbaru:", noticeError),
+    );
+    return () => {
+      active = false;
+    };
+  }, [showNotice]);
   useEffect(() => {
     if (!hasSupabase) return;
     getSupabase()
@@ -835,6 +938,20 @@ function AdminLayout({ children }) {
         if (!data.user) navigate("/admin/login", { replace: true });
       });
   }, [navigate]);
+  const logout = async () => {
+    setLogoutError("");
+    try {
+      if (hasSupabase) {
+        const supabase = await getSupabase();
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+      }
+      navigate("/admin/login", { replace: true });
+    } catch (error) {
+      console.error("Gagal keluar dari portal SI LABU:", error);
+      setLogoutError("Tidak dapat keluar. Periksa koneksi lalu coba lagi.");
+    }
+  };
   return (
     <div className="admin-shell">
       {mobileMenuOpen && (
@@ -870,6 +987,14 @@ function AdminLayout({ children }) {
             Pengaturan
           </NavLink>
         </nav>
+        <button
+          className="desktop-sidebar-logout"
+          type="button"
+          onClick={logout}
+        >
+          <LogOut size={18} />
+          Keluar
+        </button>
         <Link
           className="admin-public-link"
           to="/"
@@ -910,15 +1035,30 @@ function AdminLayout({ children }) {
               <small>Administrator</small>
             </div>
           </div>
+          <button className="logout-button" type="button" onClick={logout}>
+            <LogOut size={17} /> <span>Keluar</span>
+          </button>
         </header>
         {showNotice && (
           <div className="admin-notice" role="status">
             <div className="notice-icon">!</div>
             <div>
               <b>Selamat datang, Admin Guru BK</b>
-              <span>Ada laporan baru yang perlu ditinjau.</span>
-              <Link to="/admin/laporan/1" onClick={() => setShowNotice(false)}>
-                Buka laporan LABU-2026-0001 <ChevronRight size={15} />
+              <span>
+                {noticeReport
+                  ? `${noticeReport.report_code} menunggu ditinjau.`
+                  : "Belum ada laporan baru untuk ditinjau."}
+              </span>
+              <Link
+                to={
+                  noticeReport
+                    ? `/admin/laporan/${noticeReport.id}`
+                    : "/admin/laporan"
+                }
+                onClick={() => setShowNotice(false)}
+              >
+                {noticeReport ? "Buka laporan terbaru" : "Lihat daftar laporan"}{" "}
+                <ChevronRight size={15} />
               </Link>
             </div>
             <button
@@ -929,6 +1069,9 @@ function AdminLayout({ children }) {
               ×
             </button>
           </div>
+        )}
+        {logoutError && (
+          <p className="form-error logout-error">{logoutError}</p>
         )}
         {children}
       </div>
@@ -999,7 +1142,7 @@ function Stat({ label, value, tone = "" }) {
   );
 }
 function Reports() {
-  const { reports, loading, error } = useAdminReports();
+  const { reports, loading, error, deleteReport } = useAdminReports();
   return (
     <AdminLayout>
       <div className="admin-page">
@@ -1031,7 +1174,7 @@ function Reports() {
                 <p className="table-message">Menyiapkan tabel laporan...</p>
               }
             >
-              <ReportTable reports={reports} />
+              <ReportTable reports={reports} onDelete={deleteReport} />
             </Suspense>
           )}
         </div>
@@ -1039,14 +1182,121 @@ function Reports() {
     </AdminLayout>
   );
 }
+function ReportAttachment({ attachment }) {
+  const label = attachment.file_name || "Lampiran laporan";
+  if (!attachment.url) {
+    return (
+      <div className="attachment-item attachment-unavailable">
+        <FileText size={18} />
+        <span>{label}</span>
+      </div>
+    );
+  }
+  if (attachment.mime_type?.startsWith("image/")) {
+    return (
+      <a
+        className="attachment-item attachment-image"
+        href={attachment.url}
+        target="_blank"
+        rel="noreferrer"
+      >
+        <img src={attachment.url} alt={label} loading="lazy" />
+        <span>{label}</span>
+      </a>
+    );
+  }
+  if (attachment.mime_type?.startsWith("video/")) {
+    return (
+      <div className="attachment-item attachment-media">
+        <video controls preload="metadata">
+          <source src={attachment.url} type={attachment.mime_type} />
+          Browser tidak mendukung pemutaran video ini.
+        </video>
+        <span>{label}</span>
+      </div>
+    );
+  }
+  if (attachment.mime_type?.startsWith("audio/")) {
+    return (
+      <div className="attachment-item attachment-media">
+        <audio controls preload="none">
+          <source src={attachment.url} type={attachment.mime_type} />
+          Browser tidak mendukung pemutaran audio ini.
+        </audio>
+        <span>{label}</span>
+      </div>
+    );
+  }
+  return (
+    <a
+      className="attachment-item attachment-download"
+      href={attachment.url}
+      target="_blank"
+      rel="noreferrer"
+    >
+      <FileText size={18} />
+      <span>{label}</span>
+      <Download size={16} />
+    </a>
+  );
+}
 function Detail() {
   const { id } = useParams();
-  const { reports, loading, error, updateStatus } = useAdminReports();
+  const navigate = useNavigate();
+  const { reports, loading, error, updateStatus, deleteReport } =
+    useAdminReports();
   const report = reports.find((item) => item.id === id);
   const [status, setStatus] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [attachments, setAttachments] = useState([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [attachmentsError, setAttachmentsError] = useState("");
   useEffect(() => {
     if (report) setStatus(report.status);
   }, [report]);
+  useEffect(() => {
+    if (!report) return;
+    let active = true;
+    const loadAttachments = async () => {
+      setAttachmentsLoading(true);
+      setAttachmentsError("");
+      if (!hasSupabase) {
+        setAttachments(report.attachments || []);
+        setAttachmentsLoading(false);
+        return;
+      }
+      const supabase = await getSupabase();
+      const { data, error: queryError } = await supabase
+        .from("report_attachments")
+        .select("id, file_name, file_path, mime_type, file_size")
+        .eq("report_id", report.id)
+        .order("created_at", { ascending: true });
+      if (queryError) throw queryError;
+      const filesWithUrls = await Promise.all(
+        (data || []).map(async (attachment) => {
+          const { data: signedFile, error: signedError } =
+            await supabase.storage
+              .from("report-attachments")
+              .createSignedUrl(attachment.file_path, 60 * 60);
+          if (signedError) throw signedError;
+          return { ...attachment, url: signedFile.signedUrl };
+        }),
+      );
+      if (active) setAttachments(filesWithUrls);
+    };
+    loadAttachments()
+      .catch((attachmentError) => {
+        console.error("Gagal memuat lampiran laporan:", attachmentError);
+        if (active)
+          setAttachmentsError("Lampiran tidak dapat dimuat saat ini.");
+      })
+      .finally(() => {
+        if (active) setAttachmentsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [report?.id]);
   const message = generateWhatsAppMessage(
     { ...report, status },
     defaultTemplate,
@@ -1110,6 +1360,25 @@ function Detail() {
               </dl>
               <h3>Kronologi</h3>
               <p className="description">{report.description}</p>
+              <h3>Lampiran</h3>
+              {attachmentsLoading ? (
+                <p className="description">Memuat lampiran...</p>
+              ) : attachmentsError ? (
+                <p className="description" role="alert">
+                  {attachmentsError}
+                </p>
+              ) : attachments.length ? (
+                <div className="attachment-grid">
+                  {attachments.map((attachment) => (
+                    <ReportAttachment
+                      key={attachment.id || attachment.file_path}
+                      attachment={attachment}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="description">Belum ada lampiran.</p>
+              )}
             </div>
             <aside className="action-panel">
               <h3>Tindakan berikutnya</h3>
@@ -1139,13 +1408,24 @@ function Detail() {
                   <option>Selesai</option>
                 </select>
               </label>
-              <div className="attachment-placeholder">
-                <FileText size={20} />
-                <span>
-                  <b>Lampiran</b>
-                  <small>Belum ada lampiran</small>
-                </span>
-              </div>
+              <button
+                className="button danger-button"
+                type="button"
+                disabled={deleting}
+                onClick={async () => {
+                  if (!window.confirm("Hapus laporan ini beserta lampirannya?"))
+                    return;
+                  setDeleting(true);
+                  if (await deleteReport(report.id)) {
+                    navigate("/admin/laporan", { replace: true });
+                  } else {
+                    setDeleting(false);
+                  }
+                }}
+              >
+                <Trash2 size={17} />
+                {deleting ? "Menghapus..." : "Hapus laporan"}
+              </button>
             </aside>
           </div>
         </div>
@@ -1154,53 +1434,182 @@ function Detail() {
   );
 }
 function GuruBk() {
-  const [admins, setAdmins] = useState(demoAdmins);
-  const [passwords, setPasswords] = useState({
-    current: "",
-    next: "",
-    confirm: "",
+  const [admins, setAdmins] = useState(hasSupabase ? [] : demoAdmins);
+  const [showInvite, setShowInvite] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [invite, setInvite] = useState({ full_name: "", email: "", phone: "" });
+  const [editProfile, setEditProfile] = useState({
+    full_name: "",
+    phone: "",
+    new_password: "",
+    confirm_password: "",
   });
-  const [saved, setSaved] = useState(false);
+  const [inviteError, setInviteError] = useState("");
+  const [inviteSuccess, setInviteSuccess] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editSuccess, setEditSuccess] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
   useEffect(() => {
     if (!hasSupabase) return;
-    getSupabase()
-      .then((supabase) =>
-        supabase
-          .from("profiles")
-          .select("id, full_name, email, phone, is_admin")
-          .eq("is_admin", true),
-      )
-      .then(({ data }) => {
-        if (data?.length) {
-          setAdmins(
-            data.map((admin) => ({
-              ...admin,
-              initials: (admin.full_name || "BK").slice(0, 2).toUpperCase(),
-              is_current: false,
-            })),
-          );
-        }
-      });
-  }, []);
-  const updatePassword = (key, value) =>
-    setPasswords((valueState) => ({ ...valueState, [key]: value }));
-  const savePassword = async (event) => {
-    event.preventDefault();
-    if (
-      !passwords.current ||
-      passwords.next.length < 8 ||
-      passwords.next !== passwords.confirm
-    )
-      return;
-    if (hasSupabase) {
+    let active = true;
+    const loadAdmins = async () => {
       const supabase = await getSupabase();
-      const { error: passwordError } = await supabase.auth.updateUser({
-        password: passwords.next,
-      });
-      if (passwordError) return;
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, email, phone, is_admin")
+        .eq("is_admin", true);
+      if (!active) return;
+      if (error) throw error;
+      setAdmins(
+        (data || []).map((admin) => ({
+          ...admin,
+          initials: (admin.full_name || "BK").slice(0, 2).toUpperCase(),
+          is_current: admin.id === user?.id,
+        })),
+      );
+    };
+    loadAdmins().catch((error) => {
+      console.error("Gagal memuat daftar Guru BK:", error);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  const openSelfEditor = (admin) => {
+    if (!admin.is_current) return;
+    setEditProfile({
+      full_name: admin.full_name || "",
+      phone: admin.phone || "",
+      new_password: "",
+      confirm_password: "",
+    });
+    setEditError("");
+    setEditSuccess("");
+    setShowEdit(true);
+  };
+  const saveSelfEdit = async (event) => {
+    event.preventDefault();
+    setEditError("");
+    setEditSuccess("");
+    if (!editProfile.full_name.trim()) {
+      setEditError("Nama lengkap wajib diisi.");
+      return;
     }
-    setSaved(true);
-    setPasswords({ current: "", next: "", confirm: "" });
+    if (editProfile.new_password && editProfile.new_password.length < 8) {
+      setEditError("Password baru minimal 8 karakter.");
+      return;
+    }
+    if (editProfile.new_password !== editProfile.confirm_password) {
+      setEditError("Konfirmasi password baru tidak sama.");
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      const supabase = hasSupabase ? await getSupabase() : null;
+      let currentAdmin;
+      if (supabase) {
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError || !user) throw new Error("Sesi admin tidak ditemukan.");
+        currentAdmin = admins.find((admin) => admin.id === user.id);
+        if (!currentAdmin)
+          throw new Error("Akun ini bukan admin yang dapat diedit.");
+
+        const { error: profileError } = await supabase
+          .from("profiles")
+          .update({
+            full_name: editProfile.full_name.trim(),
+            phone: editProfile.phone.trim() || null,
+          })
+          .eq("id", user.id);
+        if (profileError) throw profileError;
+        if (editProfile.new_password) {
+          const { error: passwordError } = await supabase.auth.updateUser({
+            password: editProfile.new_password,
+          });
+          if (passwordError) throw passwordError;
+        }
+      } else {
+        currentAdmin = admins.find((admin) => admin.is_current);
+        if (!currentAdmin)
+          throw new Error("Akun yang sedang digunakan tidak ditemukan.");
+      }
+
+      const updatedAdmin = {
+        ...currentAdmin,
+        full_name: editProfile.full_name.trim(),
+        phone: editProfile.phone.trim(),
+        initials: editProfile.full_name.trim().slice(0, 2).toUpperCase(),
+      };
+      setAdmins((current) =>
+        current.map((admin) =>
+          admin.id === updatedAdmin.id ? updatedAdmin : admin,
+        ),
+      );
+      setEditSuccess(
+        editProfile.new_password
+          ? "Profil dan password berhasil diperbarui."
+          : "Profil berhasil diperbarui.",
+      );
+      setShowEdit(false);
+      setEditProfile((current) => ({
+        ...current,
+        new_password: "",
+        confirm_password: "",
+      }));
+    } catch (error) {
+      console.error("Gagal memperbarui akun Guru BK:", error);
+      setEditError(error.message || "Akun tidak dapat diperbarui.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+  const submitInvite = async (event) => {
+    event.preventDefault();
+    setInviteError("");
+    setInviteSuccess("");
+    if (!hasSupabase) {
+      setInviteError("Hubungkan Supabase untuk mengundang Guru BK.");
+      return;
+    }
+    setInviting(true);
+    try {
+      const supabase = await getSupabase();
+      const { data, error: inviteFunctionError } =
+        await supabase.functions.invoke("create-teacher", { body: invite });
+      if (inviteFunctionError) {
+        let message = inviteFunctionError.message;
+        if (inviteFunctionError.context instanceof Response) {
+          const body = await inviteFunctionError.context
+            .clone()
+            .json()
+            .catch(() => null);
+          message = body?.error || message;
+        }
+        throw new Error(message || "Undangan gagal dikirim.");
+      }
+      const teacher = {
+        ...data.teacher,
+        initials: (data.teacher.full_name || "BK").slice(0, 2).toUpperCase(),
+        is_current: false,
+      };
+      setAdmins((current) => [...current, teacher]);
+      setInviteSuccess(`Undangan akses sudah dikirim ke ${teacher.email}.`);
+      setInvite({ full_name: "", email: "", phone: "" });
+      setShowInvite(false);
+    } catch (error) {
+      console.error("Gagal mengundang Guru BK:", error);
+      setInviteError(error.message || "Undangan gagal dikirim. Coba lagi.");
+    } finally {
+      setInviting(false);
+    }
   };
   return (
     <AdminLayout>
@@ -1210,7 +1619,14 @@ function GuruBk() {
             <p className="kicker">Akses tim</p>
             <h1>Guru BK.</h1>
           </div>
-          <button className="button primary">
+          <button
+            className="button primary"
+            type="button"
+            onClick={() => {
+              setInviteError("");
+              setShowInvite(true);
+            }}
+          >
             <Users size={17} /> Tambah Guru BK
           </button>
         </div>
@@ -1230,7 +1646,7 @@ function GuruBk() {
                   <th>Email</th>
                   <th>Nomor WhatsApp</th>
                   <th>Status</th>
-                  <th>Akses password</th>
+                  <th>Aksi</th>
                 </tr>
               </thead>
               <tbody>
@@ -1248,12 +1664,14 @@ function GuruBk() {
                       <span className="status selesai">Aktif</span>
                     </td>
                     <td>
-                      {admin.is_current ? (
-                        <span className="current-access">Akun kamu</span>
-                      ) : (
-                        <span className="muted-access">
-                          Dikelola pemilik akun
-                        </span>
+                      {admin.is_current && (
+                        <button
+                          className="button quiet teacher-edit-button"
+                          type="button"
+                          onClick={() => openSelfEditor(admin)}
+                        >
+                          <KeyRound size={15} /> Edit akun saya
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -1262,60 +1680,224 @@ function GuruBk() {
             </table>
           </div>
         </div>
-        <div className="admin-card password-card">
-          <div className="card-heading">
-            <div>
-              <p className="kicker">Keamanan akun</p>
-              <h3>Ganti password saya</h3>
-            </div>
-            <KeyRound size={21} />
-          </div>
-          <p className="card-description">
-            Kamu hanya dapat mengganti password akun yang sedang digunakan.
-            Password Guru BK lain tidak dapat diubah dari sini.
+        {inviteSuccess && <p className="saved-message">{inviteSuccess}</p>}
+        {inviteError && (
+          <p className="form-error" role="alert">
+            {inviteError}
           </p>
-          <form className="password-form" onSubmit={savePassword}>
-            <label className="field">
-              <span>Password saat ini</span>
-              <input
-                type="password"
-                value={passwords.current}
-                onChange={(event) =>
-                  updatePassword("current", event.target.value)
-                }
-              />
-            </label>
-            <label className="field">
-              <span>Password baru</span>
-              <input
-                type="password"
-                minLength="8"
-                value={passwords.next}
-                onChange={(event) => updatePassword("next", event.target.value)}
-                placeholder="Minimal 8 karakter"
-              />
-            </label>
-            <label className="field">
-              <span>Ulangi password baru</span>
-              <input
-                type="password"
-                value={passwords.confirm}
-                onChange={(event) =>
-                  updatePassword("confirm", event.target.value)
-                }
-              />
-            </label>
-            <button className="button primary" type="submit">
-              <Save size={17} /> Simpan password
-            </button>
-          </form>
-          {saved && (
-            <p className="saved-message">
-              <CheckCircle2 size={16} /> Password berhasil diperbarui pada mode
-              preview.
-            </p>
-          )}
-        </div>
+        )}
+        {showInvite && (
+          <div className="modal-backdrop" role="presentation">
+            <section
+              className="invite-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="invite-teacher-title"
+            >
+              <div className="card-heading">
+                <div>
+                  <p className="kicker">Akses tim</p>
+                  <h3 id="invite-teacher-title">Undang Guru BK</h3>
+                </div>
+                <button
+                  className="icon-button modal-close"
+                  type="button"
+                  aria-label="Tutup formulir undangan"
+                  onClick={() => setShowInvite(false)}
+                >
+                  <X size={19} />
+                </button>
+              </div>
+              <p className="card-description">
+                Tautan aktivasi akun akan dikirim ke alamat email Guru BK.
+              </p>
+              <form className="invite-form" onSubmit={submitInvite}>
+                <label className="field">
+                  <span>Nama lengkap</span>
+                  <input
+                    required
+                    maxLength="120"
+                    value={invite.full_name}
+                    onChange={(event) =>
+                      setInvite((current) => ({
+                        ...current,
+                        full_name: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Email</span>
+                  <input
+                    required
+                    type="email"
+                    value={invite.email}
+                    onChange={(event) =>
+                      setInvite((current) => ({
+                        ...current,
+                        email: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Nomor WhatsApp (opsional)</span>
+                  <input
+                    type="tel"
+                    value={invite.phone}
+                    onChange={(event) =>
+                      setInvite((current) => ({
+                        ...current,
+                        phone: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                {inviteError && (
+                  <p className="form-error" role="alert">
+                    {inviteError}
+                  </p>
+                )}
+                <div className="invite-actions">
+                  <button
+                    className="button quiet"
+                    type="button"
+                    onClick={() => setShowInvite(false)}
+                  >
+                    Batal
+                  </button>
+                  <button
+                    className="button primary"
+                    type="submit"
+                    disabled={inviting}
+                  >
+                    {inviting ? "Mengirim undangan..." : "Kirim undangan"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )}
+        {editSuccess && <p className="saved-message">{editSuccess}</p>}
+        {showEdit && (
+          <div className="modal-backdrop" role="presentation">
+            <section
+              className="invite-modal account-edit-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="edit-account-title"
+            >
+              <div className="card-heading">
+                <div>
+                  <p className="kicker">Akun saya</p>
+                  <h3 id="edit-account-title">Edit profil Guru BK</h3>
+                </div>
+                <button
+                  className="icon-button modal-close"
+                  type="button"
+                  aria-label="Tutup edit akun"
+                  onClick={() => setShowEdit(false)}
+                >
+                  <X size={19} />
+                </button>
+              </div>
+              <form className="account-edit-form" onSubmit={saveSelfEdit}>
+                <label className="field">
+                  <span>Nama lengkap</span>
+                  <input
+                    required
+                    maxLength="120"
+                    value={editProfile.full_name}
+                    onChange={(event) =>
+                      setEditProfile((current) => ({
+                        ...current,
+                        full_name: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Email akun</span>
+                  <input
+                    value={
+                      admins.find((admin) => admin.is_current)?.email || ""
+                    }
+                    disabled
+                  />
+                  <small>Email dikelola melalui pengaturan autentikasi.</small>
+                </label>
+                <label className="field">
+                  <span>Nomor WhatsApp</span>
+                  <input
+                    type="tel"
+                    value={editProfile.phone}
+                    onChange={(event) =>
+                      setEditProfile((current) => ({
+                        ...current,
+                        phone: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <div className="account-password-section">
+                  <h4>Ganti password</h4>
+                  <p>Kosongkan jika tidak ingin mengubah password.</p>
+                  <label className="field">
+                    <span>Password baru</span>
+                    <input
+                      type="password"
+                      minLength="8"
+                      autoComplete="new-password"
+                      placeholder="Minimal 8 karakter"
+                      value={editProfile.new_password}
+                      onChange={(event) =>
+                        setEditProfile((current) => ({
+                          ...current,
+                          new_password: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Ulangi password baru</span>
+                    <input
+                      type="password"
+                      autoComplete="new-password"
+                      value={editProfile.confirm_password}
+                      onChange={(event) =>
+                        setEditProfile((current) => ({
+                          ...current,
+                          confirm_password: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                {editError && (
+                  <p className="form-error" role="alert">
+                    {editError}
+                  </p>
+                )}
+                <div className="invite-actions">
+                  <button
+                    className="button quiet"
+                    type="button"
+                    onClick={() => setShowEdit(false)}
+                  >
+                    Batal
+                  </button>
+                  <button
+                    className="button primary"
+                    type="submit"
+                    disabled={savingEdit}
+                  >
+                    {savingEdit ? "Menyimpan..." : "Simpan perubahan"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )}
       </div>
     </AdminLayout>
   );

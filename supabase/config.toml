@@ -1,0 +1,8 @@
+[functions.submit-report]
+verify_jwt = false
+
+[functions.create-teacher]
+verify_jwt = true
+
+[functions.delete-report]
+verify_jwt = true

@@ -23,8 +23,16 @@ Jangan masukkan `service_role` key ke frontend.
 1. Buat project Supabase.
 2. Buka SQL Editor.
 3. Jalankan `supabase/schema.sql`, lalu `supabase/seed.sql`.
-4. Schema membuat bucket private `report-attachments` dan policy admin.
-5. Aktifkan Email/Password pada Authentication.
+4. Deploy Edge Function `submit-report` dengan Supabase CLI:
+
+```bash
+supabase functions deploy submit-report --no-verify-jwt
+supabase functions deploy create-teacher
+supabase functions deploy delete-report
+```
+
+5. Schema membuat bucket private `report-attachments`; Edge Function memvalidasi laporan dan mengunggah lampiran menggunakan service role di server.
+6. Aktifkan Email/Password pada Authentication.
 
 ## 4. Admin pertama
 
@@ -45,13 +53,15 @@ User Auth baru bukan admin secara default. Hanya profile dengan `is_admin = true
 
 Tanpa env Supabase, login tetap berjalan sebagai mode preview. Saat env tersedia, login memakai Supabase Auth, route admin memeriksa session, dan hanya profile dengan `is_admin = true` yang dapat masuk.
 
+Sesi admin disimpan oleh Supabase Auth di browser sampai admin memilih **Keluar** atau sesi kedaluwarsa.
+
 ## 5. Guru BK dan settings
 
-Setelah service admin aktif, tambah Guru BK melalui `/admin/guru-bk`. Jangan memanggil `supabase.auth.admin.createUser()` dari browser; gunakan Edge Function dengan service role di server. Nomor WhatsApp BK dan template pesan disimpan pada `site_settings`, bukan hardcode frontend.
+Setelah ketiga Edge Function aktif dan SMTP Supabase dikonfigurasi, tambah Guru BK melalui `/admin/guru-bk`. Admin dapat mengundang akun lewat email; service role hanya digunakan di function server. Penghapusan laporan juga memakai function server, termasuk membersihkan metadata dan file lampiran privat. Jangan memanggil `supabase.auth.admin.createUser()` dari browser. Nomor WhatsApp BK dan template pesan disimpan pada `site_settings`, bukan hardcode frontend.
 
 ## 6. Storage
 
-Bucket `report-attachments` harus private. Public submission sebaiknya diproses melalui Edge Function atau signed upload flow yang memvalidasi MIME, ukuran, rate limit, dan path. Admin membuka file melalui signed URL, bukan public URL.
+Bucket `report-attachments` harus private. Form memanggil Edge Function `submit-report`; function memvalidasi field, MIME, ukuran, dan jumlah file sebelum menulis laporan, mengunggah objek, dan menyimpan metadata. Hanya service role di Edge Function yang melakukan operasi storage; frontend admin membuka file melalui signed URL, bukan public URL. Jangan menaruh `SUPABASE_SERVICE_ROLE_KEY` di Vercel `VITE_*` variables atau kode browser.
 
 ## 7. DataTables
 
@@ -65,9 +75,11 @@ Connect repository, gunakan build command `npm run build`, output `dist`, lalu i
 
 - **Login gagal:** cek provider Email/Password, email confirmation, dan URL/key env.
 - **RLS error:** jalankan ulang schema, pastikan user authenticated, dan cek policy/grants.
-- **Upload gagal:** pastikan bucket private ada, MIME/ukuran sesuai, dan signed upload flow digunakan.
+- **Upload gagal:** pastikan Edge Function `submit-report` sudah dideploy, bucket private tersedia, serta secret bawaan Supabase Function aktif.
 - **WhatsApp tidak terbuka:** cek nomor format internasional `62...` dan popup blocker.
 - **Laporan tidak masuk:** periksa network request, required fields, dan policy INSERT anon.
 - **Table kosong:** pastikan session authenticated dan policy SELECT admin aktif.
 - **Storage denied:** cek bucket id `report-attachments` dan policy `storage.objects`.
 - **Edge Function error:** cek logs function dan jangan pernah log service role key.
+- **Undangan Guru BK gagal:** deploy function `create-teacher`, cek SMTP, dan pastikan pemanggil adalah admin aktif.
+- **Hapus laporan gagal:** deploy function `delete-report` dan pastikan sesi admin masih aktif.
