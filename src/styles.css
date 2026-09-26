@@ -66,6 +66,7 @@ a {
   width: 39px;
   display: grid;
   place-items: center;
+  background: transparent;
 }
 .brand-mark img {
   width: 100%;
@@ -122,7 +123,7 @@ a {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: var(--mint);
+  color: var(--green);
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -261,6 +262,10 @@ h1 em {
   background: var(--deep);
   color: #fff;
   padding: 54px 0;
+}
+.intro-band .kicker,
+.message-preview .card-heading .kicker {
+  color: #b9e0bd;
 }
 .intro-grid {
   display: grid;
@@ -782,12 +787,15 @@ footer {
   display: flex;
 }
 .admin-sidebar {
-  width: 245px;
+  flex: 0 0 245px;
   background: var(--deep);
   padding: 26px 18px;
   color: #fff;
   display: flex;
   flex-direction: column;
+}
+.admin-menu-toggle {
+  display: none;
 }
 .admin-sidebar .brand {
   color: #fff;
@@ -818,6 +826,9 @@ footer {
 .admin-public-link {
   margin-top: auto;
 }
+.admin-sidebar-backdrop {
+  display: none;
+}
 .admin-content {
   flex: 1;
 }
@@ -833,6 +844,7 @@ footer {
 .admin-topbar .kicker {
   margin: 0;
   font-size: 10px;
+  color: var(--green);
 }
 .admin-topbar h2 {
   font: 800 22px Manrope;
@@ -841,7 +853,8 @@ footer {
 .admin-notice {
   position: fixed;
   z-index: 30;
-  top: 108px;
+  top: auto;
+  bottom: 24px;
   right: 28px;
   width: min(370px, calc(100% - 36px));
   display: flex;
@@ -1004,16 +1017,65 @@ footer {
 .card-heading .kicker {
   margin: 0;
 }
+.report-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.report-card::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  right: 18px;
+  bottom: -74px;
+  width: 210px;
+  aspect-ratio: 477 / 523;
+  background: url("/assets/mascot/mascot.webp") center / contain no-repeat;
+  opacity: 0.075;
+  pointer-events: none;
+}
 .table-wrap {
   overflow: auto;
 }
 .datatable-shell {
+  min-width: 0;
   overflow-x: auto;
+  scrollbar-color: #9bb9a1 #edf4ee;
 }
 .si-labu-datatable {
   width: 100% !important;
   border-collapse: collapse;
   font-size: 13px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.si-labu-datatable thead th {
+  color: var(--deep);
+  background: #f1f7f0;
+  padding: 13px 12px;
+  border-bottom: 1px solid #cbdccd;
+}
+.si-labu-datatable tbody td {
+  padding: 13px 12px;
+  vertical-align: middle;
+}
+.si-labu-datatable tbody tr {
+  transition: background-color 0.15s ease;
+}
+.si-labu-datatable tbody tr:hover {
+  background: #f6faf5;
+}
+.si-labu-datatable .report-code-cell {
+  color: var(--deep);
+  font-weight: 800;
+}
+.datatable-shell .dt-layout-row:first-child {
+  margin-top: 0;
+}
+.datatable-shell .dt-info {
+  color: var(--muted);
+  font-size: 12px;
 }
 .datatable-shell .dt-layout-row {
   display: flex;
@@ -1034,6 +1096,12 @@ footer {
   padding: 8px 10px;
   color: var(--deep);
   background: #fbfef9;
+  min-height: 38px;
+}
+.datatable-shell .dt-search input:focus,
+.datatable-shell .dt-length select:focus {
+  outline: 2px solid rgba(23, 107, 69, 0.2);
+  border-color: var(--green);
 }
 .datatable-shell .dt-buttons {
   display: flex;
@@ -1065,10 +1133,27 @@ footer {
   background: var(--green);
   color: #fff;
 }
+.datatable-shell .dt-paging-button.disabled {
+  color: #9aa89e;
+  cursor: default;
+}
 .datatable-shell .dataTables_empty {
   text-align: center;
   color: var(--muted);
   padding: 28px;
+}
+.mode-note {
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  border-left: 3px solid var(--orange);
+  background: #fff7ed;
+  color: #79522e;
+}
+.table-message {
+  margin: 8px 0 0;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
 }
 table {
   width: 100%;
@@ -1464,8 +1549,80 @@ dd {
   .login-panel .brand {
     margin-bottom: 70px;
   }
+  .admin-shell {
+    display: block;
+  }
   .admin-sidebar {
-    display: none;
+    display: flex;
+    position: fixed;
+    z-index: 51;
+    inset: 0 auto 0 0;
+    width: min(300px, 86vw);
+    height: 100vh;
+    height: 100dvh;
+    padding: 24px 18px;
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition:
+      transform 0.24s ease,
+      visibility 0.24s ease;
+    box-shadow: 18px 0 45px rgba(16, 60, 43, 0.18);
+  }
+  .admin-sidebar.open {
+    transform: translateX(0);
+    visibility: visible;
+  }
+  .admin-sidebar > .brand {
+    display: inline-flex;
+    margin-bottom: 38px;
+  }
+  .admin-sidebar nav {
+    display: grid;
+    gap: 6px;
+  }
+  .admin-sidebar nav a {
+    padding: 13px 12px;
+    font-size: 14px;
+  }
+  .admin-public-link {
+    margin-top: auto;
+    padding: 12px;
+    font-size: 13px;
+  }
+  .admin-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    z-index: 50;
+    inset: 0;
+    border: 0;
+    background: rgba(11, 28, 20, 0.48);
+    cursor: pointer;
+  }
+  .admin-menu-toggle {
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: #fff;
+    color: var(--deep);
+  }
+  .admin-topbar {
+    justify-content: flex-start;
+  }
+  .admin-topbar > div:first-of-type {
+    margin-right: auto;
+  }
+  .admin-topbar {
+    min-height: 78px;
+    height: auto;
+    gap: 12px;
+  }
+  .admin-card {
+    padding: 18px;
   }
   .admin-topbar {
     padding: 15px 18px;
@@ -1474,7 +1631,8 @@ dd {
     padding: 22px 18px;
   }
   .admin-notice {
-    top: 82px;
+    top: auto;
+    bottom: 18px;
     right: 18px;
   }
   .page-intro-row {
@@ -1491,6 +1649,14 @@ dd {
   }
   .datatable-shell .dt-layout-cell {
     flex-wrap: wrap;
+  }
+  .datatable-shell .dt-layout-cell:first-child,
+  .datatable-shell .dt-buttons {
+    width: 100%;
+  }
+  .datatable-shell .dt-button {
+    flex: 1 1 auto;
+    min-height: 36px;
   }
   .datatable-shell .dt-search,
   .datatable-shell .dt-search input {
@@ -1525,6 +1691,43 @@ dd {
   .stats {
     grid-template-columns: 1fr;
   }
+  .admin-topbar {
+    padding: 12px 14px;
+  }
+  .admin-topbar h2 {
+    font-size: 18px;
+  }
+  .profile-chip > div {
+    display: none;
+  }
+  .report-card::before {
+    right: -18px;
+    bottom: -58px;
+    width: 150px;
+    opacity: 0.065;
+  }
+  .admin-page {
+    padding: 18px 14px;
+  }
+  .admin-card {
+    padding: 14px;
+  }
+  .card-heading {
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .card-heading h3 {
+    font-size: 18px;
+  }
+  .datatable-shell .dt-layout-cell {
+    align-items: stretch;
+  }
+  .datatable-shell .dt-search input {
+    min-width: 0;
+  }
+  .datatable-shell .dt-info {
+    white-space: normal;
+  }
   .hero-actions {
     display: grid;
   }
@@ -1556,6 +1759,7 @@ dd {
   }
   .admin-notice {
     right: 14px;
+    bottom: 14px;
     width: calc(100% - 28px);
   }
 }

@@ -6,6 +6,7 @@ import {
   Routes,
   useLocation,
   useNavigate,
+  useParams,
 } from "react-router-dom";
 import {
   AlertCircle,
@@ -24,11 +25,13 @@ import {
   LayoutDashboard,
   LockKeyhole,
   KeyRound,
+  Menu,
   MessageCircle,
   Save,
   ShieldCheck,
   Upload,
   Users,
+  X,
 } from "lucide-react";
 import { motion } from "motion/react";
 import DataTable from "datatables.net-react";
@@ -88,11 +91,81 @@ const demoAdmins = [
   },
 ];
 
+function readLocalReports() {
+  try {
+    return JSON.parse(window.localStorage.getItem("si-labu-reports") || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function useAdminReports() {
+  const [reports, setReports] = useState(() =>
+    hasSupabase ? [] : readLocalReports(),
+  );
+  const [loading, setLoading] = useState(hasSupabase);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!hasSupabase) return;
+    let active = true;
+    supabase
+      .from("reports")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .then(({ data, error: queryError }) => {
+        if (!active) return;
+        setReports(data || []);
+        setError(queryError?.message || "");
+        setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const updateStatus = async (id, status) => {
+    if (hasSupabase) {
+      const { error: updateError } = await supabase
+        .from("reports")
+        .update({ status })
+        .eq("id", id);
+      if (updateError) {
+        setError("Status tidak dapat disimpan. Silakan coba lagi.");
+        return false;
+      }
+    }
+    setReports((current) => {
+      const next = current.map((report) =>
+        report.id === id ? { ...report, status } : report,
+      );
+      if (!hasSupabase) {
+        window.localStorage.setItem("si-labu-reports", JSON.stringify(next));
+      }
+      return next;
+    });
+    setError("");
+    return true;
+  };
+
+  return { reports, loading, error, updateStatus };
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        character
+      ],
+  );
+}
+
 function Brand() {
   return (
     <Link className="brand" to="/">
       <span className="brand-mark">
-        <img src="/assets/mascot/mascot-small.webp" alt="Maskot SI LABU" />
+        <img src="/assets/mascot/mascot.webp" alt="Maskot SI LABU" />
       </span>
       <span>
         <b>SI LABU</b>
@@ -374,6 +447,8 @@ function ReportForm() {
   const [files, setFiles] = useState([]);
   const [errors, setErrors] = useState({});
   const [submitted, setSubmitted] = useState(null);
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const update = (key, value) => setData((d) => ({ ...d, [key]: value }));
   const toggleType = (type) =>
     update(
@@ -382,16 +457,44 @@ function ReportForm() {
         ? data.incident_types.filter((x) => x !== type)
         : [...data.incident_types, type],
     );
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     const next = validateReport(data, files);
     setErrors(next);
     if (Object.keys(next).length) return;
-    const report = {
-      ...data,
-      report_code: `LABU-${new Date().getFullYear()}-DEMO01`,
-    };
+    setSubmitting(true);
+    setSubmitError("");
+    let report;
+    if (hasSupabase) {
+      const { data: savedReport, error: saveError } = await supabase
+        .from("reports")
+        .insert(data)
+        .select("*")
+        .single();
+      if (saveError) {
+        setSubmitError(
+          "Laporan belum dapat dikirim. Periksa koneksi lalu coba lagi.",
+        );
+        setSubmitting(false);
+        return;
+      }
+      report = savedReport;
+    } else {
+      const localReports = readLocalReports();
+      report = {
+        ...data,
+        id: crypto.randomUUID(),
+        report_code: `LABU-${new Date().getFullYear()}-${String(localReports.length + 1).padStart(4, "0")}`,
+        status: "Baru",
+        created_at: new Date().toISOString(),
+      };
+      window.localStorage.setItem(
+        "si-labu-reports",
+        JSON.stringify([report, ...localReports]),
+      );
+    }
     setSubmitted(report);
+    setSubmitting(false);
   };
   if (submitted)
     return (
@@ -604,8 +707,14 @@ function ReportForm() {
               <AlertCircle size={16} /> Periksa kembali bagian yang ditandai.
             </p>
           )}
-          <button className="button primary submit" type="submit">
-            Kirim laporan <ArrowRight size={18} />
+          {submitError && <p className="form-error">{submitError}</p>}
+          <button
+            className="button primary submit"
+            type="submit"
+            disabled={submitting}
+          >
+            {submitting ? "Mengirim laporan..." : "Kirim laporan"}{" "}
+            <ArrowRight size={18} />
           </button>
         </form>
       </section>
@@ -724,9 +833,11 @@ function AdminLogin() {
 function AdminLayout({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [showNotice, setShowNotice] = useState(
     Boolean(location.state?.welcome),
   );
+  useEffect(() => setMobileMenuOpen(false), [location.pathname]);
   useEffect(() => {
     if (!hasSupabase) return;
     supabase.auth.getUser().then(({ data }) => {
@@ -735,33 +846,60 @@ function AdminLayout({ children }) {
   }, [navigate]);
   return (
     <div className="admin-shell">
-      <aside className="admin-sidebar">
+      {mobileMenuOpen && (
+        <button
+          className="admin-sidebar-backdrop"
+          aria-label="Tutup navigasi"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+      <aside
+        className={`admin-sidebar${mobileMenuOpen ? " open" : ""}`}
+        id="admin-navigation"
+      >
         <Brand />
         <nav>
-          <NavLink to="/admin">
+          <NavLink to="/admin" end onClick={() => setMobileMenuOpen(false)}>
             <LayoutDashboard size={18} />
             Dashboard
           </NavLink>
-          <NavLink to="/admin/laporan">
+          <NavLink to="/admin/laporan" onClick={() => setMobileMenuOpen(false)}>
             <FileText size={18} />
             Laporan
           </NavLink>
-          <NavLink to="/admin/guru-bk">
+          <NavLink to="/admin/guru-bk" onClick={() => setMobileMenuOpen(false)}>
             <Users size={18} />
             Guru BK
           </NavLink>
-          <NavLink to="/admin/pengaturan">
+          <NavLink
+            to="/admin/pengaturan"
+            onClick={() => setMobileMenuOpen(false)}
+          >
             <LockKeyhole size={18} />
             Pengaturan
           </NavLink>
         </nav>
-        <Link className="admin-public-link" to="/">
+        <Link
+          className="admin-public-link"
+          to="/"
+          onClick={() => setMobileMenuOpen(false)}
+        >
           <HomeIcon size={17} />
           Lihat situs publik
         </Link>
       </aside>
       <div className="admin-content">
         <header className="admin-topbar">
+          <button
+            className="admin-menu-toggle"
+            type="button"
+            aria-label={mobileMenuOpen ? "Tutup navigasi" : "Buka navigasi"}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="admin-navigation"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+          >
+            {mobileMenuOpen ? <X size={21} /> : <Menu size={21} />}
+          </button>
           <div>
             <p className="kicker">Portal Guru BK</p>
             <h2>
@@ -807,16 +945,34 @@ function AdminLayout({ children }) {
   );
 }
 function Dashboard() {
+  const { reports, loading, error } = useAdminReports();
+  const total = reports.length;
+  const countByStatus = (status) =>
+    reports.filter((report) => report.status === status).length;
   return (
     <AdminLayout>
       <div className="admin-page">
+        {!hasSupabase && (
+          <p className="data-note mode-note">
+            Mode lokal: data hanya tersimpan di browser ini.
+          </p>
+        )}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
         <div className="stats">
-          <Stat label="Total laporan" value="24" />
-          <Stat label="Baru" value="8" tone="new" />
-          <Stat label="Ditangani" value="10" tone="handling" />
-          <Stat label="Selesai" value="6" tone="done" />
+          <Stat label="Total laporan" value={total} />
+          <Stat label="Baru" value={countByStatus("Baru")} tone="new" />
+          <Stat
+            label="Ditangani"
+            value={countByStatus("Ditangani")}
+            tone="handling"
+          />
+          <Stat label="Selesai" value={countByStatus("Selesai")} tone="done" />
         </div>
-        <div className="admin-card">
+        <div className="admin-card report-card">
           <div className="card-heading">
             <div>
               <p className="kicker">Aktivitas terbaru</p>
@@ -826,7 +982,11 @@ function Dashboard() {
               Lihat semua <ChevronRight size={16} />
             </Link>
           </div>
-          <ReportTable reports={demoReports} />
+          {loading ? (
+            <p className="table-message">Memuat laporan...</p>
+          ) : (
+            <ReportTable reports={reports.slice(0, 5)} />
+          )}
         </div>
       </div>
     </AdminLayout>
@@ -837,12 +997,12 @@ function Stat({ label, value, tone = "" }) {
     <div className={`stat ${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
-      <small>Periode September 2026</small>
+      <small>Semua periode</small>
     </div>
   );
 }
 function Reports() {
-  const [reports, setReports] = useState(demoReports);
+  const { reports, loading, error } = useAdminReports();
   return (
     <AdminLayout>
       <div className="admin-page">
@@ -855,45 +1015,56 @@ function Reports() {
             <Download size={15} /> Export dan print tersedia di toolbar tabel
           </span>
         </div>
-        <div className="admin-card">
-          <ReportTable
-            reports={reports}
-            onStatus={(id, status) =>
-              setReports((rs) =>
-                rs.map((r) => (r.id === id ? { ...r, status } : r)),
-              )
-            }
-          />
+        {!hasSupabase && (
+          <p className="data-note mode-note">
+            Mode lokal: data hanya tersimpan di browser ini.
+          </p>
+        )}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="admin-card report-card">
+          {loading ? (
+            <p className="table-message">Memuat laporan...</p>
+          ) : (
+            <ReportTable reports={reports} />
+          )}
         </div>
       </div>
     </AdminLayout>
   );
 }
-function ReportTable({ reports, onStatus }) {
+function ReportTable({ reports }) {
   const tableData = reports.map((report) => [
-    report.report_code,
-    `${report.reporter_name} · ${report.reporter_class}`,
-    report.incident_types.join(", "),
-    report.incident_date,
-    report.status,
+    escapeHtml(report.report_code),
+    escapeHtml(`${report.reporter_name} · ${report.reporter_class}`),
+    escapeHtml((report.incident_types || []).join(", ")),
+    escapeHtml(report.incident_date),
+    escapeHtml(report.status),
     report.id,
   ]);
   const columns = [
-    { title: "Nomor laporan" },
+    { title: "Nomor laporan", className: "report-code-cell" },
     { title: "Pelapor" },
-    { title: "Jenis" },
+    { title: "Jenis kejadian" },
     { title: "Tanggal" },
     {
       title: "Status",
-      render: (data) =>
-        `<span class="status ${data.toLowerCase().replace(" ", "-")}">${data}</span>`,
+      render: (data) => {
+        const statusClass =
+          { Baru: "baru", Ditangani: "ditangani", Selesai: "selesai" }[data] ||
+          "";
+        return `<span class="status ${statusClass}">${data}</span>`;
+      },
     },
     {
       title: "Aksi",
       orderable: false,
       searchable: false,
       render: (data) =>
-        `<a class="table-action" href="/admin/laporan/${data}">Detail <span aria-hidden="true">›</span></a>`,
+        `<a class="table-action" href="/admin/laporan/${escapeHtml(data)}" aria-label="Lihat detail laporan">Detail <span aria-hidden="true">›</span></a>`,
     },
   ];
   return (
@@ -905,6 +1076,8 @@ function ReportTable({ reports, onStatus }) {
         options={{
           responsive: true,
           pageLength: 10,
+          order: [[3, "desc"]],
+          autoWidth: false,
           lengthMenu: [
             [10, 25, 50, -1],
             [10, 25, 50, "Semua"],
@@ -918,8 +1091,8 @@ function ReportTable({ reports, onStatus }) {
             bottomEnd: "paging",
           },
           language: {
-            search: "Cari:",
-            searchPlaceholder: "Nama, nomor, kelas...",
+            search: "Cari laporan:",
+            searchPlaceholder: "Nama, nomor, kelas, jenis...",
             emptyTable: "Belum ada laporan.",
             zeroRecords: "Tidak ada laporan yang cocok.",
             info: "Menampilkan _START_ sampai _END_ dari _TOTAL_ laporan",
@@ -934,89 +1107,116 @@ function ReportTable({ reports, onStatus }) {
   );
 }
 function Detail() {
-  const report = demoReports[0];
-  const [status, setStatus] = useState(report.status);
+  const { id } = useParams();
+  const { reports, loading, error, updateStatus } = useAdminReports();
+  const report = reports.find((item) => item.id === id);
+  const [status, setStatus] = useState("");
+  useEffect(() => {
+    if (report) setStatus(report.status);
+  }, [report]);
   const message = generateWhatsAppMessage(
     { ...report, status },
     defaultTemplate,
   );
   return (
     <AdminLayout>
-      <div className="admin-page detail-page">
-        <Link className="back-link" to="/admin/laporan">
-          ← Kembali ke laporan
-        </Link>
-        <div className="detail-header">
-          <div>
-            <p className="kicker">{report.report_code}</p>
-            <h1>{report.reporter_name}</h1>
-            <p>{report.reporter_class} · dibuat 24 September 2026, 10:30</p>
+      {!report ? (
+        <div className="admin-page">
+          <Link className="back-link" to="/admin/laporan">
+            ← Kembali ke laporan
+          </Link>
+          <div className="empty-admin">
+            <FileText size={28} />
+            <h2>
+              {loading ? "Memuat laporan..." : "Laporan tidak ditemukan."}
+            </h2>
+            {error && <p>{error}</p>}
           </div>
-          <span className={`status ${status.toLowerCase()}`}>{status}</span>
         </div>
-        <div className="detail-grid">
-          <div className="admin-card detail-card">
-            <h3>Identitas pelapor</h3>
-            <dl>
-              <dt>Nama</dt>
-              <dd>{report.reporter_name}</dd>
-              <dt>Kelas</dt>
-              <dd>{report.reporter_class}</dd>
-              <dt>Status</dt>
-              <dd>{report.reporter_status}</dd>
-              <dt>WhatsApp</dt>
-              <dd>{report.reporter_phone}</dd>
-            </dl>
-            <h3>Kejadian</h3>
-            <dl>
-              <dt>Jenis</dt>
-              <dd>{report.incident_types.join(", ")}</dd>
-              <dt>Waktu</dt>
-              <dd>
-                {report.incident_date} · {report.incident_time}
-              </dd>
-              <dt>Lokasi</dt>
-              <dd>{report.incident_location}</dd>
-              <dt>Masih berlangsung</dt>
-              <dd>{report.is_ongoing ? "Ya" : "Tidak"}</dd>
-            </dl>
-            <h3>Kronologi</h3>
-            <p className="description">{report.description}</p>
-          </div>
-          <aside className="action-panel">
-            <h3>Tindakan berikutnya</h3>
-            <p>
-              Hubungi pelapor untuk memastikan situasi dan menentukan langkah
-              konsultasi.
-            </p>
-            <button
-              className="button whatsapp"
-              onClick={() => openWhatsApp(report.reporter_phone, message)}
-            >
-              <MessageCircle size={18} />
-              Tangani via WhatsApp
-            </button>
-            <label className="field">
-              <span>Perbarui status</span>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-              >
-                <option>Baru</option>
-                <option>Ditangani</option>
-                <option>Selesai</option>
-              </select>
-            </label>
-            <div className="attachment-placeholder">
-              <FileText size={20} />
-              <span>
-                <b>Lampiran</b>
-                <small>Belum ada lampiran</small>
-              </span>
+      ) : (
+        <div className="admin-page detail-page">
+          <Link className="back-link" to="/admin/laporan">
+            ← Kembali ke laporan
+          </Link>
+          <div className="detail-header">
+            <div>
+              <p className="kicker">{report.report_code}</p>
+              <h1>{report.reporter_name}</h1>
+              <p>
+                {report.reporter_class} · dibuat{" "}
+                {new Date(report.created_at).toLocaleString("id-ID")}
+              </p>
             </div>
-          </aside>
+            <span className={`status ${status.toLowerCase()}`}>{status}</span>
+          </div>
+          <div className="detail-grid">
+            <div className="admin-card detail-card">
+              <h3>Identitas pelapor</h3>
+              <dl>
+                <dt>Nama</dt>
+                <dd>{report.reporter_name}</dd>
+                <dt>Kelas</dt>
+                <dd>{report.reporter_class}</dd>
+                <dt>Status</dt>
+                <dd>{report.reporter_status}</dd>
+                <dt>WhatsApp</dt>
+                <dd>{report.reporter_phone}</dd>
+              </dl>
+              <h3>Kejadian</h3>
+              <dl>
+                <dt>Jenis</dt>
+                <dd>{report.incident_types.join(", ")}</dd>
+                <dt>Waktu</dt>
+                <dd>
+                  {report.incident_date} · {report.incident_time}
+                </dd>
+                <dt>Lokasi</dt>
+                <dd>{report.incident_location}</dd>
+                <dt>Masih berlangsung</dt>
+                <dd>{report.is_ongoing ? "Ya" : "Tidak"}</dd>
+              </dl>
+              <h3>Kronologi</h3>
+              <p className="description">{report.description}</p>
+            </div>
+            <aside className="action-panel">
+              <h3>Tindakan berikutnya</h3>
+              <p>
+                Hubungi pelapor untuk memastikan situasi dan menentukan langkah
+                konsultasi.
+              </p>
+              <button
+                className="button whatsapp"
+                onClick={() => openWhatsApp(report.reporter_phone, message)}
+              >
+                <MessageCircle size={18} />
+                Tangani via WhatsApp
+              </button>
+              <label className="field">
+                <span>Perbarui status</span>
+                <select
+                  value={status}
+                  onChange={async (event) => {
+                    const nextStatus = event.target.value;
+                    if (await updateStatus(report.id, nextStatus))
+                      setStatus(nextStatus);
+                  }}
+                >
+                  <option>Baru</option>
+                  <option>Ditangani</option>
+                  <option>Selesai</option>
+                </select>
+              </label>
+              <div className="attachment-placeholder">
+                <FileText size={20} />
+                <span>
+                  <b>Lampiran</b>
+                  <small>Belum ada lampiran</small>
+                </span>
+              </div>
+            </aside>
+          </div>
         </div>
-      </div>
+      )}
     </AdminLayout>
   );
 }
