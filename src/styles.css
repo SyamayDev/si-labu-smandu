@@ -1139,12 +1139,18 @@ footer {
   overflow: auto;
 }
 .datatable-shell {
+  display: block;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
   scrollbar-color: #9bb9a1 #edf4ee;
 }
 .si-labu-datatable {
   width: 100% !important;
+  min-width: 760px;
   border-collapse: collapse;
   font-size: 13px;
   border: 1px solid var(--line);
@@ -1927,6 +1933,9 @@ dd {
   .datatable-shell .dt-layout-row {
     align-items: stretch;
     flex-direction: column;
+  }
+  .datatable-shell .dt-layout-cell {
+    min-width: 0;
   }
   .datatable-shell .dt-layout-cell {
     flex-wrap: wrap;
